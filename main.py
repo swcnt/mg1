@@ -20,58 +20,60 @@ def FCFS(q_list):
 
 # Begin simulation
 
-def simulate(num_servers=1,num_jobs=10):
+def simulate(num_servers=1,num_jobs=20):
     num_completions = 0
-    EPSILON = 0.00000001
+    epsilon = 0.00000001
     total_response = 0.0
     time = 0.0
     queue = []
-
     # Distribution is exponential, use expon.rvs() to make a randon variable
     next_arrival_time = expon.rvs()
     
     # make first job, add to queue
     queue.append(job(next_arrival_time,expon.rvs()))
+    time += next_arrival_time
+
 
     # begin the race between next job finishing and next arrival
 
-    next_completion_time = queue[0].rem_size + time
+    possible_completion_time = queue[0].rem_size + time
     next_arrival_time = expon.rvs() + time
 
     while num_completions < num_jobs:
-        #Determine how long it takes for an event + what happens
-        timestep = min(next_completion_time-time, next_arrival_time-time)
-        was_arrival = next_arrival_time < next_completion_time
-        
-        # Time moves on
-        time += timestep
-        print(f"Queue length is {len(queue)}")
-        # print a list of job sizes
-        sizes = [item.rem_size for item in queue]
-        print(sizes)
-        if not queue:
-            # with a high NCT, the next rotation will default to a new arrival
-            next_completion_time = 999
-        else:
-            queue[0].rem_size -= timestep
+       # Two options: Either another job arrives before the current one finishes,
+       # or the job finishes before the next arrives.
+       print(len(queue))
 
-        if was_arrival:
-            # If a job got here, get a new next arrival time add it
-            next_arrival_time = time + expon.rvs()
-            # This job arrives immediately, because its next arrival time was set before.
-            queue.append(job(time,expon.rvs()))
-            print(f"Job found at time {time}")
+       if (next_arrival_time < possible_completion_time) or not queue:
+           if queue:
+               queue[0].rem_size -= possible_completion_time - next_arrival_time
+               possible_completion_time = time + queue[0].rem_size
+           queue.append(job(next_arrival_time,expon.rvs()))
+           time = queue[-1].arrival_time
+           
 
-        #Check and remove jobs
-        for ii,thing in enumerate(queue):
-            if queue:
-                if queue[ii].rem_size <= EPSILON:
-                    queue.pop(ii)
-                    num_completions += 1
-                    print(f"Job completed at time {time}")
+           #Determine when the next arrival is now that the current is over, then dip
+           next_arrival_time = expon.rvs() + time
+           print(f"New job found at time {time}")
 
-        if queue:
-            next_completion_time = time + queue[0].rem_size
+       elif possible_completion_time < next_arrival_time:
+           job_popped = False
+           if queue:
+               finished_job = queue.pop(0)
+               job_popped = True
+               time += finished_job.original_size
+           
+           #Determine when the next possible job completion is!
+           if job_popped:
+               if queue:
+                   possible_completion_time = queue[0].rem_size + time
+                   num_completions += 1
+               else:
+                   possible_completion_time = 999
+               #num_completions += 1
+
+               print(f" Job completed at time {time}")
 
 
 simulate()
+    
