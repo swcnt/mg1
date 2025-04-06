@@ -2,6 +2,7 @@ use noisy_float::prelude::*;
 use rand::prelude::*;
 use rand_distr::Exp;
 use rand_distr::Gamma;
+use rand_distr::Uniform;
 use std::f64::INFINITY;
 /*
 // statrs has mean and sampling formulas, not needed for now?
@@ -14,14 +15,16 @@ const EPSILON: f64 = 1e-8;
 
 fn main() {
     println!("Hello, world!");
-    let job_size_mu = 0.8;
+    let job_size_mu = 5.0;
     let job_size_shape = 0.5;
-    let dist = Dist::Hyperexp(0.2,job_size_mu,0.5);
+    //let dist = Dist::Hyperexp(1.0,job_size_mu,0.5);
+    let dist = Dist::Gamma(3.0,0.3);
+    //let dist = Dist::Uniform(0.01,1.0);
     let num_servers = 1;
-    let num_jobs = 1000000;
-    let arr_mu = 0.8;
+    let num_jobs = 1_000_000;
+    let arr_mu = 0.8; // lambda
     let seed = 2;
-    let check = simulate(num_servers, num_jobs, dist, arr_mu, seed);
+    let check = simulate(Policy::PLCFS,num_servers, num_jobs, dist, arr_mu, seed);
     println!("Metric: {}",check);
 }
 
@@ -40,6 +43,7 @@ enum Dist {
     // i know hyperexp with prob_low = 0 is just an exponential, but i wanna try this :>
     Hyperexp(f64, f64, f64),
     Gamma(f64, f64),
+    Uniform(f64, f64),
 }
 
 impl Dist {
@@ -57,8 +61,11 @@ impl Dist {
             },
             Dist::Expon(lambda) => Exp::new(*lambda).unwrap().sample(rng),
 
-            Dist::Gamma(k,lambda) => { 
-                Gamma::new(*k, *lambda).unwrap().sample(rng)
+            Dist::Gamma(k,scale) => { 
+                Gamma::new(*k, *scale).unwrap().sample(rng)
+            }
+            Dist::Uniform(low,high) => {
+                Uniform::try_from(*low..*high).unwrap().sample(rng)
             }
         }
     }
@@ -67,8 +74,8 @@ impl Dist {
         match self {
             Hyperexp(low_mu, high_mu, prob_low) => prob_low / low_mu + (1.0 - prob_low) / high_mu,
             Expon(lambda) => 1.0 / lambda,
-
-            Gamma(k, lambda) => k / lambda,
+            Gamma(k, scale) => k * scale,
+            Uniform(low, high) => (low+high)/2.0
         }
     }
 
@@ -77,7 +84,11 @@ impl Dist {
         match self {
             Hyperexp(low_mu, high_mu, prob_low) => (2.0/(low_mu.powf(2.0)) * prob_low) + (2.0/(high_mu.powf(2.0)) * (1.0 - prob_low)),
             Expon(lambda) => 2.0 / lambda.powf(2.0),
-            Gamma(k, lambda) => (k/lambda.powf(2.0)) + (k/lambda).powf(2.0),
+            Gamma(k, scale) => ((k+1.0)*k)/(1.0/scale).powf(2.0),
+            // Gamma(k, lambda) => (k/lambda.powf(2.0)) + (k/lambda).powf(2.0),
+            
+            // fix this v
+            Uniform(low, high) => (1.0/3.0) * ((high.powf(3.0)-low.powf(3.0))/(low-high))
         }
     }
 }
@@ -90,7 +101,7 @@ enum Policy {
 
 impl Policy {
     // return whichever criterion jobs get sorted by.
-    // not super used right now
+    
     fn index(&self, job: &Job) -> f64 {
         match self {
             Policy::FCFS => job.arrival_time,
@@ -119,7 +130,8 @@ fn fcfstest(arr_lambda: f64, size_dist: &Dist) {
 
 }
 
-fn simulate(num_servers: usize, num_jobs: u64, dist: Dist, arr_lambda: f64, seed: u64) -> f64 {
+fn simulate(policy: Policy,num_servers: usize, num_jobs: u64, dist: Dist, arr_lambda: f64, seed: u64) -> f64 {
+    
     let mut num_completions = 0;
     let mut queue: Vec<Job> = vec![];
     let mut total_response = 0.0;
@@ -139,9 +151,9 @@ fn simulate(num_servers: usize, num_jobs: u64, dist: Dist, arr_lambda: f64, seed
     let mut next_completion = INFINITY;
 
     while num_completions < num_jobs {
-        // queue.sort_by_key(|job| n64(policy.index(job)));
-        // i'll test policies later once FCFS metrics are confirmed
-        if false {
+        queue.sort_by_key(|job| n64(policy.index(job)));
+        // i'll test policies later once FCFS metrics are confirmed (wow they are now)
+        if true {
             println!(
                 "Time is {}: | Queue: {:?} | Load: {}",
                 time,
