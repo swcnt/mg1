@@ -30,7 +30,7 @@ fn main() {
     //let job_req_dist = Dist::Constant(0.45);
     let job_req_dist = Dist::Uniform(0.01, 1.0);
 
-    let policy = Policy::SRPT;
+    let policy = Policy::FCFSB;
     println!(
         "Policy : {:?}, Duration: {:?}, Requirement: {:?}, Jobs per data point: {}, Seed: {}",
         policy, dist, job_req_dist, num_jobs, seed
@@ -142,6 +142,8 @@ enum Policy {
     FCFS,
     PLCFS,
     SRPT,
+    FCFSB,
+    SRPTB,
 }
 
 impl Policy {
@@ -149,9 +151,9 @@ impl Policy {
 
     fn index(&self, job: &Job) -> f64 {
         match self {
-            Policy::FCFS => job.arrival_time,
+            Policy::FCFS | Policy::FCFSB => job.arrival_time,
             Policy::PLCFS => -job.arrival_time,
-            Policy::SRPT => job.rem_size,
+            Policy::SRPT | Policy::SRPTB => job.rem_size,
         }
     }
 }
@@ -195,10 +197,44 @@ fn qscan(vec: &Vec<Job>, num_servers: usize) -> usize {
     index - 1
 }
 
-fn queue_indices(vec: &Vec<Job>, num_servers: usize, policy: Policy) -> Vec<usize> {
-    todo!()
+fn take_to_vec(num_take: usize) -> Vec<usize> {
+    let v: Vec<usize> = (0..num_take).collect();
+    v
 }
 
+fn backfill(vec: &Vec<Job>, num_servers: usize) -> Vec<usize> {  
+    let total_resource = num_servers as f64;
+    if DEBUG {
+        println!("Backfilling up to {}",total_resource);
+    }
+    
+    // initialize the taken_resource counter, loop with a skip
+    let mut taken_resource = 0.0;
+    let mut indices: Vec<usize> = vec![];
+
+    for ii in 0..vec.len() {
+        let trial_take = taken_resource + vec[ii].service_req;
+        if trial_take > total_resource {
+            continue;
+        }
+        if trial_take + EPSILON <= total_resource {
+            taken_resource = trial_take;
+            indices.push(ii);
+        }
+    }
+    indices
+
+}
+
+fn queue_indices(vec: &Vec<Job>, num_servers: usize, policy: Policy) -> Vec<usize> {
+    match policy {
+        Policy::FCFS => take_to_vec(qscan(vec,num_servers)),
+        Policy::PLCFS => take_to_vec(qscan(vec,num_servers)),
+        Policy::SRPT => take_to_vec(qscan(vec,num_servers)),
+        Policy::FCFSB => backfill(vec,num_servers),
+        Policy::SRPTB => backfill(vec,num_servers),
+    }
+}
 
 fn simulate(
     policy: Policy,
