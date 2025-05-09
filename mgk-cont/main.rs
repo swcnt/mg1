@@ -13,7 +13,7 @@ use statrs::distribution::Gamma as aGammma;
 */
 
 const EPSILON: f64 = 1e-8;
-const DEBUG: bool = false;
+const DEBUG: bool = true;
 
 fn main() {
     println!("Lambda; Mean Response Time;");
@@ -28,14 +28,14 @@ fn main() {
 
     //homogenous job service requirement:
     //let job_req_dist = Dist::Constant(0.45);
-    let job_req_dist = Dist::Uniform(0.01, 1.0);
+    let job_req_dist = Dist::Uniform(0.0, 1.0);
 
-    let policy = Policy::FCFSB;
+    let policy = Policy::DB;
     println!(
         "Policy : {:?}, Duration: {:?}, Requirement: {:?}, Jobs per data point: {}, Seed: {}",
         policy, dist, job_req_dist, num_jobs, seed
     );
-    for lam_base in 1..20 {
+    for lam_base in 13..20 {
         let lambda = lam_base as f64 / 10.0;
         let check = simulate(
             policy,
@@ -144,6 +144,16 @@ enum Policy {
     SRPT,
     FCFSB,
     SRPTB,
+    PLCFSB,
+    LSF,
+    LSFB,
+    MSF,
+    MSFB,
+    SRA,
+    SRAB,
+    LRA,
+    LRAB,
+    DB,
 }
 
 impl Policy {
@@ -152,8 +162,13 @@ impl Policy {
     fn index(&self, job: &Job) -> f64 {
         match self {
             Policy::FCFS | Policy::FCFSB => job.arrival_time,
-            Policy::PLCFS => -job.arrival_time,
+            Policy::PLCFS | Policy::PLCFSB => -job.arrival_time,
             Policy::SRPT | Policy::SRPTB => job.rem_size,
+            Policy::LSF | Policy::LSFB => job.service_req,
+            Policy::MSF | Policy::MSFB => -job.service_req,
+            Policy::SRA | Policy::SRAB => job.rem_size * job.service_req,
+            Policy::LRA | Policy::LRAB => -job.rem_size * job.service_req,
+            Policy::DB => job.arrival_time,
         }
     }
 }
@@ -202,12 +217,12 @@ fn take_to_vec(num_take: usize) -> Vec<usize> {
     v
 }
 
-fn backfill(vec: &Vec<Job>, num_servers: usize) -> Vec<usize> {  
+fn backfill(vec: &Vec<Job>, num_servers: usize) -> Vec<usize> {
     let total_resource = num_servers as f64;
     if DEBUG {
-        println!("Backfilling up to {}",total_resource);
+        println!("Backfilling up to {}", total_resource);
     }
-    
+
     // initialize the taken_resource counter, loop with a skip
     let mut taken_resource = 0.0;
     let mut indices: Vec<usize> = vec![];
@@ -223,16 +238,79 @@ fn backfill(vec: &Vec<Job>, num_servers: usize) -> Vec<usize> {
         }
     }
     indices
+}
+
+fn eval_buckets(vec: &Vec<Job>, k: usize, upper: f64, lower: f64) -> Vec<usize> {
+    let increment = (upper - lower) / (k as f64);
+    let all_indices: Vec<usize> = (0..vec.len()).collect();
+    let bucket_numbers: Vec<usize> = all_indices
+        .iter()
+        .map(|index| (vec[*index].service_req / increment).floor() as usize)
+        .collect();
+    
+    // evaluate bucket scores
+    let mut bucket_rem_sizes: Vec<f64> = vec![0.0; k];
+    for ii in 0..vec.len() {
+        bucket_rem_sizes[bucket_numbers[ii]] += vec[ii].rem_size;
+    }
+    // square all bucket scores
+    let bucket_scores: Vec<f64> = bucket_rem_sizes.iter().map(|score| score.powf(2.0)).collect();
+    
+    // compare bucket scores and return the highest one
+    let mut target = 0; // 0 corresponds to bucket pair 0,k-1
+    let mut temp_new = 0.0;
+    let mut sitting_best = 0.0;
+    for jj in 0..((bucket_scores.len()-1)/2) {
+        temp_new = bucket_scores[jj] + bucket_scores[k-jj-1];
+        
+        if temp_new > sitting_best + EPSILON {
+            sitting_best = temp_new;
+            target = jj; // assign target var
+        }
+    }
+    // check the last bucket
+    let mut last = false;
+    if bucket_scores[k-1] > sitting_best {
+        target = k-1;
+        last = true;
+    }
+
+    let mut ret_indices: Vec<usize> = vec![];
+    
+    // fetch the indices of the jobs corresponding to the winning bucket
+
+    for kk in 0..vec.len() { 
+       if ((bucket_numbers[kk] == target) | (bucket_numbers[kk] == target-k-1)) & !last {
+           ret_indices.push(kk);
+       }
+       if last {
+           if bucket_numbers[kk] == target {
+               ret_indices.push(kk);
+           }
+       }
+    }
+    println!("Working on jobs {:?}",ret_indices);
+    ret_indices
 
 }
 
 fn queue_indices(vec: &Vec<Job>, num_servers: usize, policy: Policy) -> Vec<usize> {
     match policy {
-        Policy::FCFS => take_to_vec(qscan(vec,num_servers)),
-        Policy::PLCFS => take_to_vec(qscan(vec,num_servers)),
-        Policy::SRPT => take_to_vec(qscan(vec,num_servers)),
-        Policy::FCFSB => backfill(vec,num_servers),
-        Policy::SRPTB => backfill(vec,num_servers),
+        Policy::FCFS => take_to_vec(qscan(vec, num_servers)),
+        Policy::PLCFS => take_to_vec(qscan(vec, num_servers)),
+        Policy::SRPT => take_to_vec(qscan(vec, num_servers)),
+        Policy::FCFSB => backfill(vec, num_servers),
+        Policy::SRPTB => backfill(vec, num_servers),
+        Policy::PLCFSB => backfill(vec, num_servers),
+        Policy::LSF => take_to_vec(qscan(vec, num_servers)),
+        Policy::MSF => take_to_vec(qscan(vec, num_servers)),
+        Policy::LSFB => backfill(vec, num_servers),
+        Policy::MSFB => backfill(vec, num_servers),
+        Policy::SRA => take_to_vec(qscan(vec, num_servers)),
+        Policy::LRA => take_to_vec(qscan(vec, num_servers)),
+        Policy::SRAB => backfill(vec, num_servers),
+        Policy::LRAB => backfill(vec, num_servers),
+        Policy::DB => eval_buckets(vec,5,0.0,1.0),
     }
 }
 
@@ -293,9 +371,11 @@ fn simulate(
             println!("{:?} jobs eligible for work.", index_workable);
         }
 
-        let next_completion = index_workable.iter().map(|index| queue[*index].rem_size).min_by_key(|f| n64(*f)).unwrap_or(INFINITY);
-
-
+        let next_completion = index_workable
+            .iter()
+            .map(|index| queue[*index].rem_size)
+            .min_by_key(|f| n64(*f))
+            .unwrap_or(INFINITY);
 
         //find next completion time out of eligible jobs
         /*
@@ -308,7 +388,7 @@ fn simulate(
         */
         let timestep = next_completion.min(next_arrival_time - time);
         let was_arrival = timestep < next_completion;
-        
+
         // time moves forward
         time += timestep;
 
@@ -320,7 +400,9 @@ fn simulate(
             .for_each(|job| job.rem_size -= timestep as f64);
         */
 
-        index_workable.iter().for_each(|index| queue[*index].rem_size -= timestep);
+        index_workable
+            .iter()
+            .for_each(|index| queue[*index].rem_size -= timestep);
 
         // Remove jobs that may have finished (only the first num_servers) jobs
         // in the queue need to be checked.
