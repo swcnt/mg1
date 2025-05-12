@@ -242,6 +242,7 @@ fn backfill(vec: &Vec<Job>, num_servers: usize) -> Vec<usize> {
 
 fn eval_buckets(vec: &Vec<Job>, k: usize, upper: f64, lower: f64) -> Vec<usize> {
     let increment = (upper - lower) / (k as f64);
+    println!("Increment is {}",increment);
     let all_indices: Vec<usize> = (0..vec.len()).collect();
     let bucket_numbers: Vec<usize> = all_indices
         .iter()
@@ -268,19 +269,23 @@ fn eval_buckets(vec: &Vec<Job>, k: usize, upper: f64, lower: f64) -> Vec<usize> 
             target = jj; // assign target var
         }
     }
+
     // check the last bucket
     let mut last = false;
     if bucket_scores[k-1] > sitting_best {
-        target = k-1;
+        target = k;
         last = true;
     }
+    println!("Bucket scores: {:?}",bucket_scores);
+    println!("Bucket numbers of jobs: {:?}",bucket_numbers);
 
     let mut ret_indices: Vec<usize> = vec![];
     
     // fetch the indices of the jobs corresponding to the winning bucket
 
-    for kk in 0..vec.len() { 
-       if ((bucket_numbers[kk] == target) | (bucket_numbers[kk] == target-k-1)) & !last {
+    for kk in 0..vec.len() {
+       
+       if ((bucket_numbers[kk] == target) | (bucket_numbers[kk] == k-target-1)) & !last {
            ret_indices.push(kk);
        }
        if last {
@@ -310,7 +315,7 @@ fn queue_indices(vec: &Vec<Job>, num_servers: usize, policy: Policy) -> Vec<usiz
         Policy::LRA => take_to_vec(qscan(vec, num_servers)),
         Policy::SRAB => backfill(vec, num_servers),
         Policy::LRAB => backfill(vec, num_servers),
-        Policy::DB => eval_buckets(vec,5,0.0,1.0),
+        Policy::DB => eval_buckets(vec,7,1.0,0.0),
     }
 }
 
