@@ -273,7 +273,7 @@ fn eval_buckets(vec: &Vec<Job>, k: usize, upper: f64, lower: f64) -> Vec<usize> 
     // check the last bucket
     let mut last = false;
     if bucket_scores[k-1] > sitting_best {
-        target = k;
+        target = k-1;
         last = true;
     }
     println!("Bucket scores: {:?}",bucket_scores);
