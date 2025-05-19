@@ -1,4 +1,4 @@
-#![allow(non_snake_case, dead_code)]
+#![allow(non_snake_case, dead_code, unused_assignments)]
 use noisy_float::prelude::*;
 use rand::prelude::*;
 use rand_distr::Exp;
@@ -13,7 +13,7 @@ use statrs::distribution::Gamma as aGammma;
 */
 
 const EPSILON: f64 = 1e-8;
-const DEBUG: bool = true;
+const DEBUG: bool = false;
 
 fn main() {
     println!("Lambda; Mean Response Time;");
@@ -30,12 +30,12 @@ fn main() {
     //let job_req_dist = Dist::Constant(0.45);
     let job_req_dist = Dist::Uniform(0.0, 1.0);
 
-    let policy = Policy::DB;
+    let policy = Policy::DBE;
     println!(
         "Policy : {:?}, Duration: {:?}, Requirement: {:?}, Jobs per data point: {}, Seed: {}",
         policy, dist, job_req_dist, num_jobs, seed
     );
-    for lam_base in 13..20 {
+    for lam_base in 1..20 {
         let lambda = lam_base as f64 / 10.0;
         let check = simulate(
             policy,
@@ -153,7 +153,8 @@ enum Policy {
     SRAB,
     LRA,
     LRAB,
-    DB,
+    DB(usize),
+    DBE,
 }
 
 impl Policy {
@@ -168,7 +169,7 @@ impl Policy {
             Policy::MSF | Policy::MSFB => -job.service_req,
             Policy::SRA | Policy::SRAB => job.rem_size * job.service_req,
             Policy::LRA | Policy::LRAB => -job.rem_size * job.service_req,
-            Policy::DB => job.arrival_time,
+            Policy::DB(_) | Policy::DBE => job.arrival_time,
         }
     }
 }
@@ -184,9 +185,11 @@ fn fcfstest(arr_lambda: f64, size_dist: &Dist) {
     // we have everything needed to find E[T] and E[N]
     let ET = (arr_lambda * esquare) / (2.0 * (1.0 - rho)) + avg_size;
     let EN = ET * arr_lambda;
-
-    println!("Mean Response time is: {}, Mean Queue Length is {}", ET, EN);
+    if DEBUG {
+        println!("Mean Response time is: {}, Mean Queue Length is {}", ET, EN);
+    }
 }
+
 
 fn qscan(vec: &Vec<Job>, num_servers: usize) -> usize {
     let mut index = 0;
@@ -241,8 +244,12 @@ fn backfill(vec: &Vec<Job>, num_servers: usize) -> Vec<usize> {
 }
 
 fn eval_buckets(vec: &Vec<Job>, k: usize, upper: f64, lower: f64) -> Vec<usize> {
+    assert!(k % 2 == 1);
+
     let increment = (upper - lower) / (k as f64);
-    println!("Increment is {}",increment);
+    if DEBUG {
+        println!("Increment is {}, k is {}",increment,k);
+    }
     let all_indices: Vec<usize> = (0..vec.len()).collect();
     let bucket_numbers: Vec<usize> = all_indices
         .iter()
@@ -250,19 +257,19 @@ fn eval_buckets(vec: &Vec<Job>, k: usize, upper: f64, lower: f64) -> Vec<usize> 
         .collect();
     
     // evaluate bucket scores
-    let mut bucket_rem_sizes: Vec<f64> = vec![0.0; k];
+    let mut bucket_counts: Vec<f64> = vec![0.0; k];
     for ii in 0..vec.len() {
-        bucket_rem_sizes[bucket_numbers[ii]] += vec[ii].rem_size;
+        bucket_counts[bucket_numbers[ii]] += 1.0;
     }
     // square all bucket scores
-    let bucket_scores: Vec<f64> = bucket_rem_sizes.iter().map(|score| score.powf(2.0)).collect();
+    let bucket_scores: Vec<f64> = bucket_counts.iter().map(|score| score.powf(2.0)).collect();
     
     // compare bucket scores and return the highest one
     let mut target = 0; // 0 corresponds to bucket pair 0,k-1
     let mut temp_new = 0.0;
     let mut sitting_best = 0.0;
     for jj in 0..((bucket_scores.len()-1)/2) {
-        temp_new = bucket_scores[jj] + bucket_scores[k-jj-1];
+        temp_new = bucket_scores[jj] + bucket_scores[k-jj-2];
         
         if temp_new > sitting_best + EPSILON {
             sitting_best = temp_new;
@@ -276,16 +283,38 @@ fn eval_buckets(vec: &Vec<Job>, k: usize, upper: f64, lower: f64) -> Vec<usize> 
         target = k-1;
         last = true;
     }
-    println!("Bucket scores: {:?}",bucket_scores);
-    println!("Bucket numbers of jobs: {:?}",bucket_numbers);
 
+    if DEBUG {
+        println!("Bucket scores: {:?}",bucket_scores);
+        println!("Bucket numbers of jobs: {:?}",bucket_numbers);
+        println!("Last bucket targeted?: {:?}",last);
+    }
     let mut ret_indices: Vec<usize> = vec![];
     
     // fetch the indices of the jobs corresponding to the winning bucket
+    for kk in 0..vec.len() {
+        
+        if bucket_numbers[kk] == target {
+            ret_indices.push(kk);
+            break;
+        }
+    }
+
+
+    for kk in 0..vec.len() {
+        if !last {
+            if bucket_numbers[kk] == k-target-2 {
+                ret_indices.push(kk);
+                break;
+            }
+        }
+    }
+
+/*
 
     for kk in 0..vec.len() {
        
-       if ((bucket_numbers[kk] == target) | (bucket_numbers[kk] == k-target-1)) & !last {
+       if ((bucket_numbers[kk] == target) | (bucket_numbers[kk] == k-target-2)) & !last {
            ret_indices.push(kk);
        }
        if last {
@@ -294,12 +323,27 @@ fn eval_buckets(vec: &Vec<Job>, k: usize, upper: f64, lower: f64) -> Vec<usize> 
            }
        }
     }
+    */
+
+    if DEBUG {
     println!("Working on jobs {:?}",ret_indices);
+    }
     ret_indices
 
 }
 
-fn queue_indices(vec: &Vec<Job>, num_servers: usize, policy: Policy) -> Vec<usize> {
+fn lambda_to_k(lambda: f64) -> usize {
+    let k_mid = (lambda + 2.0) / (2.0 - lambda);
+    let mut attempt_k = k_mid.ceil() as usize;
+    if attempt_k % 2 == 0 {
+        attempt_k = attempt_k + 1
+    }
+    attempt_k as usize
+}
+
+fn queue_indices(vec: &Vec<Job>, num_servers: usize, policy: Policy, lambda: f64) -> Vec<usize> {
+    let l_lim = 0.0;
+    let u_lim = num_servers as f64;
     match policy {
         Policy::FCFS => take_to_vec(qscan(vec, num_servers)),
         Policy::PLCFS => take_to_vec(qscan(vec, num_servers)),
@@ -315,7 +359,8 @@ fn queue_indices(vec: &Vec<Job>, num_servers: usize, policy: Policy) -> Vec<usiz
         Policy::LRA => take_to_vec(qscan(vec, num_servers)),
         Policy::SRAB => backfill(vec, num_servers),
         Policy::LRAB => backfill(vec, num_servers),
-        Policy::DB => eval_buckets(vec,7,1.0,0.0),
+        Policy::DB(k) => eval_buckets(vec,k,u_lim,l_lim),
+        Policy::DBE =>  eval_buckets(vec,lambda_to_k(lambda),u_lim,l_lim),
     }
 }
 
@@ -370,11 +415,15 @@ fn simulate(
         // determine how many jobs need to get worked on in the sorted queue.
         //let num_workable = qscan(&queue, num_servers);
         //
-        let index_workable = queue_indices(&queue, num_servers, policy);
+        let mut index_workable = queue_indices(&queue, num_servers, policy, arr_lambda);
+        index_workable.sort();
 
         if DEBUG {
             println!("{:?} jobs eligible for work.", index_workable);
         }
+
+        let capacity: f64 = index_workable.iter().map(|index| queue[*index].service_req).sum();
+        assert!(capacity < 1.0 + EPSILON);
 
         let next_completion = index_workable
             .iter()
@@ -415,6 +464,7 @@ fn simulate(
         // i dont know why they reverse here though
 
         for &index in index_workable.iter().rev() {
+            assert!(index < queue.len());
             if queue[index].rem_size < EPSILON {
                 let job = queue.remove(index);
                 total_response += time - job.arrival_time;
